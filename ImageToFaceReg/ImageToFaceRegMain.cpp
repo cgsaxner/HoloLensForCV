@@ -29,12 +29,12 @@ namespace ImageToFaceReg
 			HoloLensForCV::SensorType::ShortThrowToFDepth
 		};
 
+		// initialize face detector
 		StorageFolder^ folder = Windows::ApplicationModel::Package::Current->InstalledLocation;
 		auto pathString = folder->Path->Begin();
 		std::wstring s(pathString);
 		s += std::wstring(L"\\Assets\\lbpcascade_frontalface_improved.xml");
 		std::string pathToCascade(s.begin(), s.end());
-
 
 		if (!_faceCascade.load(pathToCascade))
 		{
@@ -111,7 +111,20 @@ namespace ImageToFaceReg
 			return;
 		}
 
-		if (_photoVideoPreviewTimestamp.UniversalTime == latestPhotoVideoPreviewFrame->Timestamp.UniversalTime || _depthPreviewTimestamp.UniversalTime == latestDepthPreviewFrame->Timestamp.UniversalTime)
+		if (_unprojectionMap.empty())
+		{
+			auto depthIntrinsics = latestDepthPreviewFrame->SensorStreamingCameraIntrinsics;
+			auto photoVideoProjectionTransform = latestPhotoVideoPreviewFrame->CameraProjectionTransform;
+
+			Float4x4ToCvMat(photoVideoProjectionTransform, _photoVideoIntrinsics);
+			GetUnprojectionMap(depthIntrinsics, _unprojectionMap);
+		}
+
+		// dbg::trace(L"Depth intrinsics loaded. Height is %i, Width is %i.", depthIntrinsics->ImageHeight, depthIntrinsics->ImageWidth);
+		dbg::trace(L"Photo Video intrinsics loaded. fx is %f, fy is %f.", _photoVideoIntrinsics.at<float>(0, 0), _photoVideoIntrinsics.at<float>(1, 1));
+
+		if (_photoVideoPreviewTimestamp.UniversalTime == latestPhotoVideoPreviewFrame->Timestamp.UniversalTime || 
+			_depthPreviewTimestamp.UniversalTime == latestDepthPreviewFrame->Timestamp.UniversalTime)
 		{
 			return;
 		}
@@ -153,62 +166,6 @@ namespace ImageToFaceReg
 		OpenCVHelpers::CreateOrUpdateTexture2D(_deviceResources, matRgbImg, _photoVideoPreviewTexture);
 		OpenCVHelpers::CreateOrUpdateTexture2D(_deviceResources, matDepthImg, _depthPreviewTexture);
 
-		//if (_photoVideoPreviewTexture == nullptr)
-		//{
-		//	_photoVideoPreviewTexture = std::make_shared<Rendering::Texture2D>(_deviceResources,
-		//		latestPhotoVideoPreviewFrame->SoftwareBitmap->PixelWidth,
-		//		latestPhotoVideoPreviewFrame->SoftwareBitmap->PixelHeight,
-		//		photoVideoPreviewTextureFormat);
-		//}
-
-		//if (_depthPreviewTexture == nullptr)
-		//{
-		//	_depthPreviewTexture = std::make_shared<Rendering::Texture2D>(_deviceResources,
-		//		latestDepthPreviewFrame->SoftwareBitmap->PixelWidth,
-		//		latestDepthPreviewFrame->SoftwareBitmap->PixelHeight,
-		//		depthPreviewTextureFormat);
-		//}
-
-		//{
-		//	void* mappedTexture = _photoVideoPreviewTexture->MapCPUTexture<void>(D3D11_MAP_WRITE /* mapType */);
-		//	Windows::Graphics::Imaging::SoftwareBitmap^ bitmap = latestPhotoVideoPreviewFrame->SoftwareBitmap;
-
-		//	REQUIRES(photoVideoPreviewExpectedBitmapPixelFormat == bitmap->BitmapPixelFormat);
-		//	Windows::Graphics::Imaging::BitmapBuffer^ bitmapBuffer = bitmap->LockBuffer(Windows::Graphics::Imaging::BitmapBufferAccessMode::Read);
-
-		//	uint32_t pixelBufferDataLength = 0;
-
-		//	uint8_t* pixelBufferData = Io::GetTypedPointerToMemoryBuffer<uint8_t>(bitmapBuffer->CreateReference(), pixelBufferDataLength);
-
-		//	const int32_t bytesToCopy = _photoVideoPreviewTexture->GetWidth() *  _photoVideoPreviewTexture->GetHeight() * photoVideoPreviewPixelStride;
-
-		//	ASSERT(static_cast<uint32_t>(bytesToCopy) == pixelBufferDataLength);
-		//	ASSERT(0 == memcpy_s(mappedTexture, bytesToCopy, pixelBufferData, pixelBufferDataLength));
-
-		//	_photoVideoPreviewTexture->UnmapCPUTexture();
-		//}
-
-		//{
-		//	void* mappedTexture = _depthPreviewTexture->MapCPUTexture<void>(D3D11_MAP_WRITE /* mapType */);
-		//	Windows::Graphics::Imaging::SoftwareBitmap^ bitmap = latestDepthPreviewFrame->SoftwareBitmap;
-
-		//	REQUIRES(depthPreviewExpectedBitmapPixelFormat == bitmap->BitmapPixelFormat);
-		//	Windows::Graphics::Imaging::BitmapBuffer^ bitmapBuffer = bitmap->LockBuffer(Windows::Graphics::Imaging::BitmapBufferAccessMode::Read);
-
-		//	uint32_t pixelBufferDataLength = 0;
-
-		//	uint8_t* pixelBufferData = Io::GetTypedPointerToMemoryBuffer<uint8_t>(bitmapBuffer->CreateReference(), pixelBufferDataLength);
-
-		//	const int32_t bytesToCopy = _depthPreviewTexture->GetWidth() * _depthPreviewTexture->GetHeight() * depthPreviewPixelStride;
-
-		//	ASSERT(static_cast<uint32_t>(bytesToCopy) == pixelBufferDataLength);
-		//	ASSERT(0 == memcpy_s(mappedTexture, bytesToCopy, pixelBufferData, pixelBufferDataLength));
-
-		//	_depthPreviewTexture->UnmapCPUTexture();
-		//}
-
-		//_photoVideoPreviewTexture->CopyCPU2GPU();
-		//_depthPreviewTexture->CopyCPU2GPU();
 	}
 
 
@@ -324,43 +281,66 @@ namespace ImageToFaceReg
 		});
 	}
 
-	cv::Mat AppMain::LoadUnprojectionMap(std::string file_path, int w, int h)
+	void AppMain::GetUnprojectionMap(_In_ HoloLensForCV::CameraIntrinsics^ researchModeSensorIntrinsics, 
+		_Inout_ cv::Mat& unprojectionMap)
 	{
-		cv::Mat unprojection_map(cv::Size(w, h), CV_32FC2);
+		int w = researchModeSensorIntrinsics->ImageWidth;
+		int h = researchModeSensorIntrinsics->ImageHeight;
 
-		std::ifstream ifs(file_path, std::ios::binary | std::ios::ate);
-		if (!ifs.is_open()) {
-			std::cout << "Could not open or find depth map binary file" << std::endl;
-			ifs.close();
-		}
-
-		// read all bytes
-		std::ifstream::pos_type pos = ifs.tellg();
-		std::vector<char> result(pos);
-
-		ifs.seekg(0, std::ios::beg);
-		ifs.read(&result[0], pos);
+		unprojectionMap = cv::Mat::zeros(cv::Size(w, h), CV_32FC2);
 
 		std::vector<float> u_vals, v_vals;
-		for (int i = 0; i < result.size(); i += 8)
+
+		for (unsigned int x = 0; x < w; ++x)
 		{
-			float val_u, val_v;
-			uchar byte_array_u[] = { result[i], result[i + 1], result[i + 2], result[i + 3] };
-			uchar byte_array_v[] = { result[i + 4], result[i + 5], result[i + 6], result[i + 7] };
-			std::copy(reinterpret_cast<const char*>(&byte_array_u[0]), reinterpret_cast<const char*>(&byte_array_u[4]), reinterpret_cast<char*>(&val_u));
-			std::copy(reinterpret_cast<const char*>(&byte_array_v[0]), reinterpret_cast<const char*>(&byte_array_v[4]), reinterpret_cast<char*>(&val_v));
-			u_vals.push_back(val_u);
-			v_vals.push_back(val_v);
-		}
-		for (int c = 0; c < unprojection_map.cols; c++)
-		{
-			for (int r = 0; r < unprojection_map.rows; r++)
+			for (unsigned int y = 0; y < h; ++y)
 			{
-				unprojection_map.at<cv::Vec2f>(r, c)[0] = u_vals[c * unprojection_map.rows + r];
-				unprojection_map.at<cv::Vec2f>(r, c)[1] = v_vals[c * unprojection_map.rows + r];
+				Windows::Foundation::Point uv = { float(x), float(y) }, xy;
+				researchModeSensorIntrinsics->MapImagePointToCameraUnitPlane(uv, &xy);
+				u_vals.push_back(xy.X);
+				v_vals.push_back(xy.Y);
 			}
 		}
 
-		return unprojection_map;
+		for (int c = 0; c < unprojectionMap.cols; c++)
+		{
+			for (int r = 0; r < unprojectionMap.rows; r++)
+			{
+				unprojectionMap.at<cv::Vec2f>(r, c)[0] = u_vals[c * unprojectionMap.rows + r];
+				unprojectionMap.at<cv::Vec2f>(r, c)[1] = v_vals[c * unprojectionMap.rows + r];
+			}
+		}
+	}
+
+	void AppMain::Float4x4ToCvMat(_In_ Windows::Foundation::Numerics::float4x4 floatArray, _Inout_ cv::Mat& cvMat)
+	{
+		REQUIRES(cvMat.rows == 4 &&
+			cvMat.cols == 4 &&
+			cvMat.depth() == CV_32F);
+
+		cvMat.at<float>(0, 0) = floatArray.m11;
+		cvMat.at<float>(0, 1) = floatArray.m12;
+		cvMat.at<float>(0, 2) = floatArray.m13;
+		cvMat.at<float>(0, 3) = floatArray.m14;
+
+		cvMat.at<float>(1, 0) = floatArray.m21;
+		cvMat.at<float>(1, 1) = floatArray.m22;
+		cvMat.at<float>(1, 2) = floatArray.m23;
+		cvMat.at<float>(1, 3) = floatArray.m24;
+
+		cvMat.at<float>(2, 0) = floatArray.m31;
+		cvMat.at<float>(2, 1) = floatArray.m32;
+		cvMat.at<float>(2, 2) = floatArray.m33;
+		cvMat.at<float>(2, 3) = floatArray.m34;
+
+		cvMat.at<float>(3, 0) = floatArray.m41;
+		cvMat.at<float>(3, 1) = floatArray.m42;
+		cvMat.at<float>(3, 2) = floatArray.m43;
+		cvMat.at<float>(3, 3) = floatArray.m44;
+	}
+
+	std::vector<cv::Point2f> AppMain::MapRgb2Depth(HoloLensForCV::SensorFrame rgbFrame, HoloLensForCV::SensorFrame depthFrame, std::vector<cv::Point2f> rgbPoints)
+	{
+
 	}
 }

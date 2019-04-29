@@ -38,8 +38,13 @@ namespace ImageToFaceReg
 		// Initializes access to HoloLens sensors.
 		void StartHoloLensMediaFrameSourceGroup();
 
-		cv::Mat LoadUnprojectionMap(std::string file_path, int w, int h);
+		// Converts Windows float4x4 array to cv Mat
+		void Float4x4ToCvMat(_In_ Windows::Foundation::Numerics::float4x4 floatArray, _Inout_ cv::Mat& cvMat);
 
+		// Gets unprojeciton map from research mode sensors
+		void GetUnprojectionMap(_In_ HoloLensForCV::CameraIntrinsics^ researchModeSensorIntrinsics, _Inout_ cv::Mat& unprojectionMap);
+
+		std::vector<cv::Point2f> MapRgb2Depth(HoloLensForCV::SensorFrame rgbFrame, HoloLensForCV::SensorFrame depthFrame, std::vector<cv::Point2f> rgbPoints);
 
 	private:
 
@@ -65,5 +70,9 @@ namespace ImageToFaceReg
 
 		Windows::Foundation::DateTime _photoVideoPreviewTimestamp;
 		Windows::Foundation::DateTime _depthPreviewTimestamp;
+
+		// Camera intrinsics
+		cv::Mat _unprojectionMap;
+		cv::Mat _photoVideoIntrinsics = cv::Mat::eye(4, 4, CV_32F);
 	};
 }
