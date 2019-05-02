@@ -43,8 +43,9 @@ namespace ImageToFaceReg
 
 		// Gets unprojeciton map from research mode sensors
 		void GetUnprojectionMap(_In_ HoloLensForCV::CameraIntrinsics^ researchModeSensorIntrinsics, _Inout_ cv::Mat& unprojectionMap);
+		void LoadUnprojectionMap(int w, int h);
 
-		std::vector<cv::Point2f> MapRgb2Depth(HoloLensForCV::SensorFrame rgbFrame, HoloLensForCV::SensorFrame depthFrame, std::vector<cv::Point2f> rgbPoints);
+		std::vector<cv::Point2f> MapRgb2Depth(HoloLensForCV::SensorFrame^ rgbFrame, HoloLensForCV::SensorFrame^ depthFrame, std::vector<cv::Point2f> rgbPoints);
 
 	private:
 

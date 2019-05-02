@@ -117,11 +117,11 @@ namespace ImageToFaceReg
 			auto photoVideoProjectionTransform = latestPhotoVideoPreviewFrame->CameraProjectionTransform;
 
 			Float4x4ToCvMat(photoVideoProjectionTransform, _photoVideoIntrinsics);
-			GetUnprojectionMap(depthIntrinsics, _unprojectionMap);
-		}
 
-		// dbg::trace(L"Depth intrinsics loaded. Height is %i, Width is %i.", depthIntrinsics->ImageHeight, depthIntrinsics->ImageWidth);
-		dbg::trace(L"Photo Video intrinsics loaded. fx is %f, fy is %f.", _photoVideoIntrinsics.at<float>(0, 0), _photoVideoIntrinsics.at<float>(1, 1));
+			dbg::trace(L"Start unprojection map loading...");
+			LoadUnprojectionMap(depthIntrinsics->ImageWidth, depthIntrinsics->ImageHeight);
+			// GetUnprojectionMap(depthIntrinsics, _unprojectionMap);
+		}
 
 		if (_photoVideoPreviewTimestamp.UniversalTime == latestPhotoVideoPreviewFrame->Timestamp.UniversalTime || 
 			_depthPreviewTimestamp.UniversalTime == latestDepthPreviewFrame->Timestamp.UniversalTime)
@@ -150,8 +150,23 @@ namespace ImageToFaceReg
 
 		_faceCascade.detectMultiScale(smallImg, faces, 1.1, 2, 0 | cv::CASCADE_SCALE_IMAGE, cv::Size(30, 30));
 
-		dbg::trace(L"Found %i faces", faces.size());
+		if (faces.size() > 0)
+		{
+			dbg::trace(L"Found %i faces", faces.size());
+			cv::Rect faceSmall = faces[0];
 
+			cv::Rect faceRect(cv::Point(cvRound(faceSmall.x * scale), cvRound(faceSmall.y  * scale)),
+				cv::Point(cvRound((faceSmall.x + faceSmall.width - 1) * scale), cvRound((faceSmall.y + faceSmall.height - 1) * scale)));
+
+			std::vector<cv::Point2f> rgbBBox, depthBBox;
+			rgbBBox.push_back(cv::Point2f(faceRect.x, faceRect.y));
+			rgbBBox.push_back(cv::Point2f(faceRect.x + faceRect.width, faceRect.y));
+			rgbBBox.push_back(cv::Point2f(faceRect.x + faceRect.width, faceRect.y + faceRect.height));
+			rgbBBox.push_back(cv::Point2f(faceRect.x, faceRect.y + faceRect.height));
+
+			depthBBox = MapRgb2Depth(latestPhotoVideoPreviewFrame, latestDepthPreviewFrame, rgbBBox);
+		}
+		
 		for (size_t i = 0; i < faces.size(); i++)
 		{
 			
@@ -281,11 +296,85 @@ namespace ImageToFaceReg
 		});
 	}
 
+	IBuffer^ getBufferFromString(Platform::String^ str)
+	{
+		InMemoryRandomAccessStream^ memoryStream = ref new InMemoryRandomAccessStream();
+		DataWriter^ dataWriter = ref new DataWriter(memoryStream);
+		dataWriter->WriteString(str);
+		return dataWriter->DetachBuffer();
+	}
+
+	void AppMain::LoadUnprojectionMap(int w, int h)
+	{
+		cv::Mat unprojectionMap = cv::Mat(cv::Size(w, h), CV_32FC2);
+
+		create_task(KnownFolders::GetFolderForUserAsync(nullptr, KnownFolderId::PicturesLibrary)).then([this](StorageFolder^ picturesFolder)
+		{
+			return picturesFolder->GetFileAsync("short_throw_depth_camera_space_projection.bin");
+		}).then([this](task<StorageFile^> task)
+		{
+			try
+			{
+				StorageFile^ file = task.get();
+				auto name = file->Name;
+				return file->OpenAsync(FileAccessMode::Read);
+			}
+			catch (Platform::Exception^ e)
+			{
+				dbg::trace(L"Error opening file.");
+			}
+		}).then([this, unprojectionMap](task<IRandomAccessStream^> task)
+		{
+			uint64 length = 0;
+			BYTE *extracted;
+			std::vector<unsigned char> result;
+			IRandomAccessStream^  inputStream = task.get();
+			length = inputStream->Size;
+			IBuffer^ buffer = ref new Buffer(inputStream->Size);
+			inputStream->ReadAsync(buffer, inputStream->Size, InputStreamOptions::None);
+			DataReader^ reader = DataReader::FromBuffer(buffer);
+
+			std::vector<unsigned char> data(reader->UnconsumedBufferLength);
+			if (!data.empty())
+				reader->ReadBytes(Platform::ArrayReference<unsigned char>(&data[0], data.size()));
+
+			std::vector<float> u_vals, v_vals;
+			for (int i = 0; i < data.size(); i += 8)
+			{
+				float val_u, val_v;
+				uchar byte_array_u[] = { result[i], result[i + 1], result[i + 2], result[i + 3] };
+				uchar byte_array_v[] = { result[i + 4], result[i + 5], result[i + 6], result[i + 7] };
+				std::copy(reinterpret_cast<const char*>(&byte_array_u[0]), reinterpret_cast<const char*>(&byte_array_u[4]), reinterpret_cast<char*>(&val_u));
+				std::copy(reinterpret_cast<const char*>(&byte_array_v[0]), reinterpret_cast<const char*>(&byte_array_v[4]), reinterpret_cast<char*>(&val_v));
+				u_vals.push_back(val_u);
+				v_vals.push_back(val_v);
+			}
+			for (int c = 0; c < unprojectionMap.cols; c++)
+			{
+				for (int r = 0; r < unprojectionMap.rows; r++)
+				{
+					unprojectionMap.at<cv::Vec2f>(r, c)[0] = u_vals[c * unprojectionMap.rows + r];
+					unprojectionMap.at<cv::Vec2f>(r, c)[1] = v_vals[c * unprojectionMap.rows + r];
+				}
+			}
+
+			//extracted = new BYTE[buffer->Length];
+			//reader->ReadBytes(Platform::ArrayReference<BYTE>(extracted, buffer->Length));
+		});
+
+		
+	}
+
+
 	void AppMain::GetUnprojectionMap(_In_ HoloLensForCV::CameraIntrinsics^ researchModeSensorIntrinsics, 
 		_Inout_ cv::Mat& unprojectionMap)
 	{
 		int w = researchModeSensorIntrinsics->ImageWidth;
 		int h = researchModeSensorIntrinsics->ImageHeight;
+
+		dbg::trace(L"Load unprojection map...");
+		dbg::trace(L"%i", w);
+		dbg::trace(L"%i", h);
 
 		unprojectionMap = cv::Mat::zeros(cv::Size(w, h), CV_32FC2);
 
@@ -295,10 +384,14 @@ namespace ImageToFaceReg
 		{
 			for (unsigned int y = 0; y < h; ++y)
 			{
-				Windows::Foundation::Point uv = { float(x), float(y) }, xy;
+				Windows::Foundation::Point uv = {float(x), float(y)}, xy;
+				dbg::trace(L"%f", uv.X);
+				dbg::trace(L"%f", uv.Y);
 				researchModeSensorIntrinsics->MapImagePointToCameraUnitPlane(uv, &xy);
 				u_vals.push_back(xy.X);
 				v_vals.push_back(xy.Y);
+				dbg::trace(L"%f", xy.X);
+				dbg::trace(L"%f", xy.Y);
 			}
 		}
 
@@ -339,8 +432,142 @@ namespace ImageToFaceReg
 		cvMat.at<float>(3, 3) = floatArray.m44;
 	}
 
-	std::vector<cv::Point2f> AppMain::MapRgb2Depth(HoloLensForCV::SensorFrame rgbFrame, HoloLensForCV::SensorFrame depthFrame, std::vector<cv::Point2f> rgbPoints)
+	void DebugOutputMatrix(std::wstring prompt, float4x4 transform)
 	{
+		prompt += std::to_wstring(transform.m11) + L", ";
+		prompt += std::to_wstring(transform.m12) + L", ";
+		prompt += std::to_wstring(transform.m13) + L", ";
+		prompt += std::to_wstring(transform.m14) + L"\n";
+		prompt += std::to_wstring(transform.m21) + L", ";
+		prompt += std::to_wstring(transform.m22) + L", ";
+		prompt += std::to_wstring(transform.m23) + L", ";
+		prompt += std::to_wstring(transform.m24) + L"\n";
+		prompt += std::to_wstring(transform.m31) + L", ";
+		prompt += std::to_wstring(transform.m32) + L", ";
+		prompt += std::to_wstring(transform.m33) + L", ";
+		prompt += std::to_wstring(transform.m34) + L"\n";
+		prompt += std::to_wstring(transform.m41) + L", ";
+		prompt += std::to_wstring(transform.m42) + L", ";
+		prompt += std::to_wstring(transform.m43) + L", ";
+		prompt += std::to_wstring(transform.m44);
+		dbg::trace(prompt.data());
+	}
 
+	void DebugOutputMatrix(std::wstring prompt, cv::Mat transform)
+	{
+		prompt += std::to_wstring(transform.at<float>(0, 0)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(1, 0)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(2, 0)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(3, 0)) + L"\n";
+		prompt += std::to_wstring(transform.at<float>(0, 1)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(1, 1)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(2, 1)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(3, 1)) + L"\n";
+		prompt += std::to_wstring(transform.at<float>(0, 2)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(1, 2)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(2, 2)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(3, 2)) + L"\n";
+		prompt += std::to_wstring(transform.at<float>(0, 3)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(1, 3)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(2, 3)) + L", ";
+		prompt += std::to_wstring(transform.at<float>(3, 3));
+		dbg::trace(prompt.data());
+	}
+
+	std::vector<cv::Point2f> AppMain::MapRgb2Depth(HoloLensForCV::SensorFrame^ rgbFrame, HoloLensForCV::SensorFrame^ depthFrame, std::vector<cv::Point2f> rgbPoints)
+	{
+		cv::Mat rgbViewTransform = cv::Mat::eye(4, 4, CV_32F);
+		cv::Mat rgbFrameToOrigin = cv::Mat::eye(4, 4, CV_32F);
+		cv::Mat depthViewTransform = cv::Mat::eye(4, 4, CV_32F);
+		cv::Mat depthFrameToOrigin = cv::Mat::eye(4, 4, CV_32F);
+
+		std::vector<cv::Point2f> depthPoints;
+
+		std::wstring output;
+
+		DebugOutputMatrix(output, rgbFrame->CameraViewTransform);
+		DebugOutputMatrix(output, rgbFrame->FrameToOrigin);
+		DebugOutputMatrix(output, depthFrame->CameraViewTransform);
+		DebugOutputMatrix(output, depthFrame->FrameToOrigin);
+
+		Float4x4ToCvMat(rgbFrame->CameraViewTransform, rgbViewTransform);
+		Float4x4ToCvMat(rgbFrame->FrameToOrigin, rgbFrameToOrigin);
+		Float4x4ToCvMat(depthFrame->CameraViewTransform, depthViewTransform);
+		Float4x4ToCvMat(depthFrame->FrameToOrigin, depthFrameToOrigin);
+
+		DebugOutputMatrix(output, rgbViewTransform);
+		DebugOutputMatrix(output, rgbFrameToOrigin);
+		DebugOutputMatrix(output, depthViewTransform);
+		DebugOutputMatrix(output, depthFrameToOrigin);
+
+		cv::Mat rgbExtrinsics = rgbViewTransform * rgbFrameToOrigin.inv();
+		cv::Mat depthExtrinsics = depthViewTransform * depthFrameToOrigin.inv();
+		rgbExtrinsics.convertTo(rgbExtrinsics, CV_64F);
+		depthExtrinsics.convertTo(depthExtrinsics, CV_64F);
+
+		dbg::trace(L"Matrices created");
+
+		float A = _photoVideoIntrinsics.at<float>(2, 2);
+		float fx = _photoVideoIntrinsics.at<float>(0, 0);
+		float fy = _photoVideoIntrinsics.at<float>(1, 1);
+		float cx = _photoVideoIntrinsics.at<float>(2, 0);
+		float cy = _photoVideoIntrinsics.at<float>(2, 1);
+
+		dbg::trace(L"Found intrinsic parameters");
+
+		for (int j = 0; j < rgbPoints.size(); j++)
+		{
+			cv::Point2d rgbScaled(
+				(2.0 * rgbPoints[j].x / rgbFrame->CoreCameraIntrinsics->ImageWidth - 1.0),
+				2.0 * (1.0 - rgbPoints[j].y / rgbFrame->CoreCameraIntrinsics->ImageHeight) - 1.0);
+
+			dbg::trace(L"Point scaled: %f, %f", rgbScaled.x, rgbScaled.y);
+
+			cv::Point3d rgbCam(
+				(rgbScaled.x - cx / A) / fx,
+				(rgbScaled.y - cy / A) / fy,
+				1.0 / A);
+
+			dbg::trace(L"Point rgb view: %f, %f, %f", rgbCam.x, rgbCam.y, rgbCam.z);
+
+			cv::Mat rgbCamMat = (cv::Mat_<double>(4, 1) << rgbCam.x * 0.3, rgbCam.y * 0.3, rgbCam.z * 0.3, 1);
+
+			dbg::trace(L"RGB view matrix: %f, %f, %f, %f", rgbCamMat.at<double>(0, 0), rgbCamMat.at<double>(1, 0), rgbCamMat.at<double>(2, 0), rgbCamMat.at<double>(3, 0));
+
+			dbg::trace(L"RGB extrinsics: %f, %f, %f, %f", rgbExtrinsics.at<double>(0, 0), rgbExtrinsics.at<double>(1, 0), rgbExtrinsics.at<double>(2, 0), rgbExtrinsics.at<double>(3, 0));
+
+			cv::Mat worldMat = rgbExtrinsics.inv() * rgbCamMat;
+			cv::Mat depthCamMat = depthExtrinsics * worldMat;
+
+			dbg::trace(L"Depth cam: %f, %f, %f", depthCamMat.at<double>(0, 0), depthCamMat.at<double>(1, 0), depthCamMat.at<double>(2, 0));
+
+			cv::Point2f depthScaled(
+				depthCamMat.at<double>(0, 0) / depthCamMat.at<double>(2, 0),
+				depthCamMat.at<double>(1, 0) / depthCamMat.at<double>(2, 0)
+			);
+
+			dbg::trace(L"Pointdepth scaled: %f, %f", rgbScaled.x, rgbScaled.y);
+
+			cv::Mat diff(cv::Size(_unprojectionMap.cols, _unprojectionMap.rows), CV_64FC1);
+			for (int c = 0; c < diff.cols; c++)
+			{
+				for (int r = 0; r < diff.rows; r++)
+				{
+					float u = _unprojectionMap.at<cv::Vec2f>(r, c)[0];
+					dbg::trace(L"%f", u);
+					float v = _unprojectionMap.at<cv::Vec2f>(r, c)[1];
+					dbg::trace(L"%f", v);
+					diff.at<double>(r, c) = abs(u - depthScaled.x) + abs(v - depthScaled.y);
+				}
+			}
+
+			double min, max;
+			cv::Point min_loc, max_loc;
+			cv::minMaxLoc(diff, &min, &max, &min_loc, &max_loc);
+			depthPoints.push_back(min_loc);
+			dbg::trace(L"Point depth frame: %f, %f", min_loc.x, min_loc.y);
+		}
+
+		return depthPoints;
 	}
 }
