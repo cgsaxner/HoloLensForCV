@@ -6,17 +6,20 @@ using namespace FaceDetectorPlugin;
 using namespace Platform;
 using namespace Windows::Perception::Spatial;
 using namespace Windows::Foundation::Numerics;
+using namespace Windows::Storage;
 
 FaceDetector::FaceDetector()
 {
+
 }
 
 
 FaceDetector::~FaceDetector()
 {
+
 }
 
-void FaceDetector::Initialize(int* spatialCoordinateSystem)
+int FaceDetector::Initialize(int* spatialCoordinateSystem)
 {
 	// Set the sensors to enable
 	_enabledSensorTypes = {
@@ -27,10 +30,19 @@ void FaceDetector::Initialize(int* spatialCoordinateSystem)
 	// Initialize face detector
 	// Load LBP face cascade. The file has to be placed into the working directory of your Unity application – when you’re within the editor, this is the root project directory.
 	dbg::trace(L"Setting up Cascade face detector");
-	std::string pathToCascade = "lbpcascade_frontalface_improved.xml";
+
+	// initialize face detector
+	//StorageFolder^ folder = Windows::ApplicationModel::Package::Current->InstalledLocation;
+	//auto pathString = folder->Path->Begin();
+	//std::wstring s(pathString);
+	//s += std::wstring(L"\\Assets\\lbpcascade_frontalface_improved.xml");
+	//std::string pathToCascade(s.begin(), s.end());
+	std::string pathToCascade("\\Assets\\lbpcascade_frontalface_improved.xml");
+
 	if (!_faceCascade.load(pathToCascade))
 	{
 		dbg::trace(L"Failed to load cascade definition.");
+		return -1;
 	}
 
 	// initialize the coordinate system using the coordinate system provided by unity
@@ -41,7 +53,8 @@ void FaceDetector::Initialize(int* spatialCoordinateSystem)
 	else
 	{
 		dbg::trace(L"Creator failed to provide valid ISpatialCoordinateSystem");
-		throw ref new InvalidArgumentException();
+		return -2;
+	
 	}
 
 	dbg::trace(L"Setting up SpatialPerception");
@@ -52,6 +65,7 @@ void FaceDetector::Initialize(int* spatialCoordinateSystem)
 	_depthFrameBuffer = ref new HoloLensForCV::MultiFrameBuffer();
 
 	StartHoloLensMediaFrameSourceGroup();
+	return 0;
 }
 
 void FaceDetector::Dispose()

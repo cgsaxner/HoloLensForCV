@@ -19,7 +19,7 @@ namespace FaceDetectorPlugin
 		FaceDetector();
 		~FaceDetector();
 
-		void Initialize(int* iSpatialCoordinateSystem);
+		int Initialize(int* iSpatialCoordinateSystem);
 		void Dispose();
 		bool DetectFace();
 		bool GetDetectedFacePose(float* position, float* rotation, float* cameraToWorldUnity);

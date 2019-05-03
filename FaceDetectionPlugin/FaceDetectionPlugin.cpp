@@ -11,14 +11,16 @@ extern "C" __declspec(dllexport) bool __stdcall CheckPlugin()
 	return true;
 }
 
-extern "C" __declspec(dllexport) void __stdcall Initialize(int* spatialCoordinateSystem)
+extern "C" __declspec(dllexport) int __stdcall Initialize(int* spatialCoordinateSystem)
 {
 	if (!faceDetector)
 	{
 		faceDetector = new FaceDetector();
 	}
 
-	faceDetector->Initialize(spatialCoordinateSystem);
+	int result = faceDetector->Initialize(spatialCoordinateSystem);
+	return result;
+
 }
 
 extern "C" __declspec(dllexport) void __stdcall Dispose()

@@ -29,7 +29,7 @@ namespace ImageToFaceReg
 			HoloLensForCV::SensorType::ShortThrowToFDepth
 		};
 
-		// initialize face detector
+		 // initialize face detector
 		StorageFolder^ folder = Windows::ApplicationModel::Package::Current->InstalledLocation;
 		auto pathString = folder->Path->Begin();
 		std::wstring s(pathString);
