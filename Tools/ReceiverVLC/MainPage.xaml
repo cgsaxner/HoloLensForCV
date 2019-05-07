@@ -47,7 +47,7 @@
                 <StackPanel BorderThickness="2" VerticalAlignment="Bottom" BorderBrush="Black" HorizontalAlignment="Center">
                     <Image Name="_vlcRightRightImage" Width="640" Height="480"/>
                     <TextBlock TextWrapping="Wrap">Right-right visible light camera service name:</TextBlock>
-                    <TextBox x:Name="_vlcRightRightServiceName" Text="23946"/>
+                    <TextBox x:Name="_vlcRightRightServiceName" Text="23940"/>
                 </StackPanel>
             </StackPanel>
         </StackPanel>

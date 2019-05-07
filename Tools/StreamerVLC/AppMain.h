@@ -49,9 +49,13 @@ namespace StreamerVLC
 
     private:
         // Selected HoloLens media frame source group
-        HoloLensForCV::MediaFrameSourceGroupType _selectedHoloLensMediaFrameSourceGroupType;
-        HoloLensForCV::MediaFrameSourceGroup^ _holoLensMediaFrameSourceGroup;
-        bool _holoLensMediaFrameSourceGroupStarted;
+		// HoloLens media frame source group for reading the sensor streams.
+		HoloLensForCV::MediaFrameSourceGroup^ _photoVideoMediaFrameSourceGroup;
+		std::atomic_bool _photoVideoMediaFrameSourceGroupStarted;
+
+		// Note that we have to create a separate media frame source group for the research mode sensors.
+		HoloLensForCV::MediaFrameSourceGroup^ _researchModeMediaFrameSourceGroup;
+		std::atomic_bool _researchModeMediaFrameSourceGroupStarted;
 
         // HoloLens media frame server manager
         HoloLensForCV::SensorFrameStreamer^ _sensorFrameStreamer;

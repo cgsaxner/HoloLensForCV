@@ -28,9 +28,8 @@ namespace StreamerVLC
     // Loads and initializes application assets when the application is loaded.
     AppMain::AppMain(const std::shared_ptr<Graphics::DeviceResources>& deviceResources)
         : Holographic::AppMainBase(deviceResources)
-        , _selectedHoloLensMediaFrameSourceGroupType(
-            HoloLensForCV::MediaFrameSourceGroupType::HoloLensResearchModeSensors)
-        , _holoLensMediaFrameSourceGroupStarted(false)
+		, _photoVideoMediaFrameSourceGroupStarted(false)
+		, _researchModeMediaFrameSourceGroupStarted(false)
     {
     }
 
@@ -83,7 +82,7 @@ namespace StreamerVLC
         _slateRenderer->Update(
             stepTimer);
 
-        if (!_holoLensMediaFrameSourceGroupStarted)
+        if (!_researchModeMediaFrameSourceGroupStarted || !_photoVideoMediaFrameSourceGroupStarted)
         {
             return;
         }
@@ -95,7 +94,7 @@ namespace StreamerVLC
 
 		{
 			latestCameraPreviewFrame =
-				_holoLensMediaFrameSourceGroup->GetLatestSensorFrame(
+				_researchModeMediaFrameSourceGroup->GetLatestSensorFrame(
 					renderSensorType);
 
 			if ((HoloLensForCV::SensorType::ShortThrowToFDepth == renderSensorType) ||
@@ -214,12 +213,15 @@ namespace StreamerVLC
     // need to be released before this method returns.
     void AppMain::OnDeviceLost()
     {
-        _slateRenderer->ReleaseDeviceDependentResources();
+		_slateRenderer->ReleaseDeviceDependentResources();
 
-        _holoLensMediaFrameSourceGroup = nullptr;
-        _holoLensMediaFrameSourceGroupStarted = false;
+		_photoVideoMediaFrameSourceGroup = nullptr;
+		_researchModeMediaFrameSourceGroup = nullptr;
 
-        _cameraPreviewTexture.reset();
+		_photoVideoMediaFrameSourceGroupStarted = false;
+		_researchModeMediaFrameSourceGroupStarted = false;
+
+		_slateRenderer.reset();
     }
 
     // Notifies classes that use Direct3D device resources that the device resources
@@ -234,19 +236,23 @@ namespace StreamerVLC
 	// Called when the application is suspending.
 	void AppMain::SaveAppState()
 	{
-		if (_holoLensMediaFrameSourceGroup == nullptr)
+		if (_photoVideoMediaFrameSourceGroup == nullptr && _researchModeMediaFrameSourceGroup == nullptr)
 			return;
 
-		concurrency::create_task(_holoLensMediaFrameSourceGroup->StopAsync()).then(
+		concurrency::create_task(_photoVideoMediaFrameSourceGroup->StopAsync()).then(
 			[&]()
 		{
-			delete _holoLensMediaFrameSourceGroup;
-			_holoLensMediaFrameSourceGroup = nullptr;
-			_holoLensMediaFrameSourceGroupStarted = false;
+			delete _photoVideoMediaFrameSourceGroup;
+			_photoVideoMediaFrameSourceGroup = nullptr;
+			_photoVideoMediaFrameSourceGroupStarted = false;
+		}).wait();
 
-			delete _sensorFrameStreamer;
-			_sensorFrameStreamer = nullptr;
-
+		concurrency::create_task(_researchModeMediaFrameSourceGroup->StopAsync()).then(
+			[&]()
+		{
+			delete _researchModeMediaFrameSourceGroup;
+			_researchModeMediaFrameSourceGroup = nullptr;
+			_researchModeMediaFrameSourceGroupStarted = false;
 		}).wait();
 	}
 
@@ -278,6 +284,9 @@ namespace StreamerVLC
         enabledSensorTypes.emplace_back(
             HoloLensForCV::SensorType::VisibleLightRightRight);
 
+		enabledSensorTypes.emplace_back(
+			HoloLensForCV::SensorType::PhotoVideo);
+
         _sensorFrameStreamer =
             ref new HoloLensForCV::SensorFrameStreamer();
 
@@ -287,22 +296,40 @@ namespace StreamerVLC
                 enabledSensorType);
         }
 
-        _holoLensMediaFrameSourceGroup =
+		_photoVideoMediaFrameSourceGroup =
+			ref new HoloLensForCV::MediaFrameSourceGroup(
+				HoloLensForCV::MediaFrameSourceGroupType::PhotoVideoCamera,
+				_spatialPerception, 
+				_sensorFrameStreamer);
+
+        _researchModeMediaFrameSourceGroup =
             ref new HoloLensForCV::MediaFrameSourceGroup(
-                _selectedHoloLensMediaFrameSourceGroupType,
+				HoloLensForCV::MediaFrameSourceGroupType::HoloLensResearchModeSensors,
                 _spatialPerception,
                 _sensorFrameStreamer);
 
         for (const auto enabledSensorType : enabledSensorTypes)
         {
-            _holoLensMediaFrameSourceGroup->Enable(
-                enabledSensorType);
+			if (enabledSensorType == HoloLensForCV::SensorType::PhotoVideo)
+			{
+				_photoVideoMediaFrameSourceGroup->Enable(enabledSensorType);
+			}
+			else
+			{
+				_researchModeMediaFrameSourceGroup->Enable(enabledSensorType);
+			}
         }
 
-        concurrency::create_task(_holoLensMediaFrameSourceGroup->StartAsync()).then(
+        concurrency::create_task(_researchModeMediaFrameSourceGroup->StartAsync()).then(
             [&]()
         {
-            _holoLensMediaFrameSourceGroupStarted = true;
+            _researchModeMediaFrameSourceGroupStarted = true;
         });
+
+		concurrency::create_task(_photoVideoMediaFrameSourceGroup->StartAsync()).then(
+			[&]()
+		{
+			_photoVideoMediaFrameSourceGroupStarted = true;
+		});
     }
 }

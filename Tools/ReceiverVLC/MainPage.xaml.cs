@@ -65,6 +65,7 @@ namespace ReceiverVLC
         private CameraImageContext _vlcLeftFrontContext;
         private CameraImageContext _vlcRightFrontContext;
         private CameraImageContext _vlcRightRightContext;
+        private CameraImageContext _pvCameraImageContext;
 
         public MainPage()
         {
@@ -74,6 +75,7 @@ namespace ReceiverVLC
             _vlcLeftFrontContext = new CameraImageContext(BitmapPixelFormat.Gray8, 640, 480, true /* needsConversion */);
             _vlcRightFrontContext = new CameraImageContext(BitmapPixelFormat.Gray8, 640, 480, true /* needsConversion */);
             _vlcRightRightContext = new CameraImageContext(BitmapPixelFormat.Gray8, 640, 480, true /* needsConversion */);
+            _pvCameraImageContext = new CameraImageContext(BitmapPixelFormat.Bgra8, 1280, 720, false);
 
             UpdateImages();
         }
@@ -119,7 +121,8 @@ namespace ReceiverVLC
             UpdateImage(_vlcLeftLeftContext, _vlcLeftLeftImage);
             UpdateImage(_vlcLeftFrontContext, _vlcLeftFrontImage);
             UpdateImage(_vlcRightFrontContext, _vlcRightFrontImage);
-            UpdateImage(_vlcRightRightContext, _vlcRightRightImage);
+            // UpdateImage(_vlcRightRightContext, _vlcRightRightImage);
+            UpdateImage(_pvCameraImageContext, _vlcRightRightImage);
         }
 
         /// <summary>
@@ -234,6 +237,13 @@ namespace ReceiverVLC
                                 sensorFrame.SoftwareBitmap;
 
                             _vlcRightRightContext.ImageSourceNeedsUpdate = true;
+                            break;
+
+                        case HoloLensForCV.SensorType.PhotoVideo:
+                            _pvCameraImageContext.RawImage =
+                                sensorFrame.SoftwareBitmap;
+
+                            _pvCameraImageContext.ImageSourceNeedsUpdate = true;
                             break;
 
                         default:
